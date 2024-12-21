@@ -4,6 +4,8 @@ from kivy.uix.label import Label
 from kivy.uix.button import Button
 from kivy.uix.textinput import TextInput
 from kivy.uix.screenmanager import ScreenManager, Screen
+from kivy.uix.scrollview import ScrollView
+from kivy.uix.label import Label
 import pymysql
 
 from kivy.uix.popup import Popup
@@ -24,12 +26,21 @@ connection = pymysql.connect(
 
 def show_popup(message):
     layout = BoxLayout(orientation='vertical', padding=10, spacing=10)
-    label = Label(text=message, font_size='18sp')
-    close_button = Button(text="Close", size_hint=(1, 0.2))
-    layout.add_widget(label)
+
+    # ScrollView ekliyoruz
+    scroll_view = ScrollView(size_hint=(1, 1))
+    
+    # Mesajı içine alacak bir Label ekliyoruz
+    message_label = Label(text=message, font_size='18sp', size_hint_y=None)
+    message_label.bind(texture_size=message_label.setter('size'))  # Mesaj metninin boyutuna göre ayarlama yapıyoruz
+    scroll_view.add_widget(message_label)
+
+    close_button = Button(text="Close", size_hint=(1, 0.1))
+    layout.add_widget(scroll_view)
     layout.add_widget(close_button)
 
-    popup = Popup(title="Message", content=layout, size_hint=(0.6, 0.4))
+    # Popup boyutunu daha da büyük yapıyoruz
+    popup = Popup(title="Transaction History", content=layout, size_hint=(0.9, 0.95))  # %90 genişlik, %95 yükseklik
     close_button.bind(on_press=popup.dismiss)
     popup.open()
 
@@ -114,6 +125,11 @@ class MainScreen(Screen):
         layout.add_widget(self.points_to_send_input)
         layout.add_widget(send_button)
 
+        # Geçmiş Butonu
+        history_button = Button(text="History", size_hint=(1, 0.2))
+        history_button.bind(on_press=self.show_history)
+        layout.add_widget(history_button)
+
         self.add_widget(layout)
 
     def logout(self, instance):
@@ -155,35 +171,133 @@ class MainScreen(Screen):
             connection.ping(reconnect=True)
             cursor = connection.cursor()
 
-            query_users_list = "SELECT username FROM person_data WHERE username = %s"
+            query_users_list = "SELECT username, admin_check FROM person_data WHERE username = %s"
             cursor.execute(query_users_list, (recipient_username,))
             recipient_exists = cursor.fetchone()
 
             if recipient_exists:
-                query_meeple_point = "SELECT meeple_point FROM person_data WHERE username = %s"
+                query_meeple_point = "SELECT meeple_point, admin_check FROM person_data WHERE username = %s"
                 cursor.execute(query_meeple_point, (username,))
                 sender_points = cursor.fetchone()
 
-                if sender_points and sender_points['meeple_point'] >= points_to_send:
-                    # Gönderenin puanını güncelle
-                    query_send_meeple_point = "UPDATE person_data SET meeple_point = meeple_point - %s WHERE username = %s"
-                    cursor.execute(query_send_meeple_point, (points_to_send, username))
+                transactionID_max_value = "SELECT transactionID FROM logs WHERE transactionID = (SELECT MAX(transactionID) FROM logs)"
+                cursor.execute(transactionID_max_value)
+                result = cursor.fetchone()
+                transaction_id = result['transactionID']
+                #print(transaction_id)  # Sadece sayıyı yazdırır
 
-                    # Alıcının puanını güncelle
-                    query_pending_send_meeple_point = "UPDATE person_data SET meeple_point = meeple_point + %s WHERE username = %s"
-                    cursor.execute(query_pending_send_meeple_point, (points_to_send, recipient_username))
+                if recipient_exists['admin_check'] != 2:
+                    if sender_points and sender_points['meeple_point'] >= points_to_send + 1 and sender_points['admin_check'] != 2:
+                        # Gönderenin puanını güncelle
+                        query_send_meeple_point = "UPDATE person_data SET meeple_point = meeple_point - %s WHERE username = %s"
+                        cursor.execute(query_send_meeple_point, (points_to_send+1, username))
 
-                    connection.commit()
+                        # Alıcının puanını güncelle
+                        query_pending_send_meeple_point = "UPDATE person_data SET meeple_point = meeple_point + %s WHERE username = %s"
+                        cursor.execute(query_pending_send_meeple_point, (points_to_send, recipient_username))
 
-                    self.send_to_input.text = ""
-                    self.points_to_send_input.text = ""
-                    show_popup(f"Sent {points_to_send} meeple point to {recipient_username}")
-                else:
-                    show_popup("Not enough Meeple points!")
+                        transaction_logs = "INSERT INTO logs (transactionID, from_whom, to_who, how_much) VALUES (%s, %s, %s, %s)"
+                        cursor.execute(transaction_logs, (transaction_id+1, username, recipient_username, points_to_send))
+
+                        connection.commit()
+
+                        self.send_to_input.text = ""
+                        self.points_to_send_input.text = ""
+                        show_popup(f"Sent {points_to_send} meeple point to {recipient_username}\n1 Meeple Point commission")
+
+
+                    elif sender_points['admin_check'] == 2:
+                        # Admin alıcının puanını güncelle
+                        query_pending_send_meeple_point = "UPDATE person_data SET meeple_point = meeple_point + %s WHERE username = %s"
+                        cursor.execute(query_pending_send_meeple_point, (points_to_send, recipient_username))
+
+                        transaction_logs = "INSERT INTO logs (transactionID, from_whom, to_who, how_much) VALUES (%s, %s, %s, %s)"
+                        cursor.execute(transaction_logs, (transaction_id+1, username, recipient_username, points_to_send))
+
+                        connection.commit()
+
+                        self.send_to_input.text = ""
+                        self.points_to_send_input.text = ""
+                        show_popup(f"Sent {points_to_send} meeple point to {recipient_username}")
+                    else:
+                        show_popup("Not enough Meeple points!\nDon't forget 1 Meeple Point commission")
+                elif recipient_exists['admin_check'] == 2:
+                    if sender_points and sender_points['meeple_point'] >= points_to_send:
+                        # Gönderenin puanını güncelle
+                        query_send_meeple_point = "UPDATE person_data SET meeple_point = meeple_point - %s WHERE username = %s"
+                        cursor.execute(query_send_meeple_point, (points_to_send, username))
+
+                        # Alıcının puanını güncelle
+                        query_pending_send_meeple_point = "UPDATE person_data SET meeple_point = meeple_point + %s WHERE username = %s"
+                        cursor.execute(query_pending_send_meeple_point, (points_to_send, recipient_username))
+
+                        transaction_logs = "INSERT INTO logs (transactionID, from_whom, to_who, how_much) VALUES (%s, %s, %s, %s)"
+                        cursor.execute(transaction_logs, (transaction_id+1, username, recipient_username, points_to_send))
+
+                        connection.commit()
+
+                        self.send_to_input.text = ""
+                        self.points_to_send_input.text = ""
+                        show_popup(f"Sent {points_to_send} meeple point to {recipient_username}")
+                    elif sender_points['admin_check'] == 2:
+                        # Admin alıcının puanını güncelle
+                        query_pending_send_meeple_point = "UPDATE person_data SET meeple_point = meeple_point + %s WHERE username = %s"
+                        cursor.execute(query_pending_send_meeple_point, (points_to_send, recipient_username))
+
+                        transaction_logs = "INSERT INTO logs (transactionID, from_whom, to_who, how_much) VALUES (%s, %s, %s, %s)"
+                        cursor.execute(transaction_logs, (transaction_id+1, username, recipient_username, points_to_send))
+
+                        connection.commit()
+
+                        self.send_to_input.text = ""
+                        self.points_to_send_input.text = ""
+                        show_popup(f"Sent {points_to_send} meeple point to {recipient_username}")
+                    else:
+                        show_popup("Not enough Meeple points!")
             else:
                 show_popup("Invalid username!")
         finally:
             cursor.close()
+
+
+
+    def show_history(self, instance):
+        username = self.username
+
+        try:
+            connection.ping(reconnect=True)
+            cursor = connection.cursor()
+
+            # Kullanıcıya gelen puanlar
+            query_received = "SELECT transactionID, from_whom, how_much FROM logs WHERE to_who = %s ORDER BY transactionID DESC"
+            cursor.execute(query_received, (username,))
+            received_logs = cursor.fetchall()
+
+            # Kullanıcının gönderdiği puanlar
+            query_sent = "SELECT transactionID, to_who, how_much FROM logs WHERE from_whom = %s ORDER BY transactionID DESC"
+            cursor.execute(query_sent, (username,))
+            sent_logs = cursor.fetchall()
+
+            # Popup içeriğini oluştur
+            history_content = "meeple points coming\nto you:\n"
+            if received_logs:
+                for log in received_logs:
+                    history_content += f"From: {log['from_whom']}, Amount: {log['how_much']}, Transaction ID: {log['transactionID']}\n"
+            else:
+                history_content += "No transactions.\n"
+
+            history_content += "\nMeeple points sent\nby you:\n"
+            if sent_logs:
+                for log in sent_logs:
+                    history_content += f"To: {log['to_who']}, Amount: {log['how_much']}, Transaction ID: {log['transactionID']}\n"
+            else:
+                history_content += "No transactions.\n"
+
+            show_popup(history_content)
+
+        finally:
+            cursor.close()
+
 
 # Uygulama Yapısı
 class MeeplePointApp(App):
