@@ -1,3 +1,4 @@
+
 from kivy.app import App
 from kivy.uix.boxlayout import BoxLayout
 from kivy.uix.label import Label
@@ -40,7 +41,7 @@ def show_popup(message):
     layout.add_widget(close_button)
 
     # Popup boyutunu daha da büyük yapıyoruz
-    popup = Popup(title="Transaction History", content=layout, size_hint=(0.9, 0.95))  # %90 genişlik, %95 yükseklik
+    popup = Popup(title="Message", content=layout, size_hint=(0.9, 0.95))  # %90 genişlik, %95 yükseklik
     close_button.bind(on_press=popup.dismiss)
     popup.open()
 
@@ -87,6 +88,7 @@ class LoginScreen(Screen):
                 show_popup("Wrong username or password!")
         finally:
             cursor.close()
+            connection.close()
 
 # Ana Ekran
 class MainScreen(Screen):
@@ -153,6 +155,7 @@ class MainScreen(Screen):
                 show_popup("Failed to fetch meeple points!")
         finally:
             cursor.close()
+            connection.close()
 
     def send_points(self, instance):
         recipient_username = self.send_to_input.text
@@ -221,6 +224,8 @@ class MainScreen(Screen):
                         show_popup(f"Sent {points_to_send} meeple point to {recipient_username}")
                     else:
                         show_popup("Not enough Meeple points!\nDon't forget 1 Meeple Point commission")
+                    cursor.close()
+                    connection.close()
                 elif recipient_exists['admin_check'] == 2:
                     if sender_points and sender_points['meeple_point'] >= points_to_send:
                         # Gönderenin puanını güncelle
@@ -254,10 +259,16 @@ class MainScreen(Screen):
                         show_popup(f"Sent {points_to_send} meeple point to {recipient_username}")
                     else:
                         show_popup("Not enough Meeple points!")
+                cursor.close()
+                connection.close()
             else:
                 show_popup("Invalid username!")
-        finally:
-            cursor.close()
+        except:
+            return
+
+
+            
+    
 
 
 
@@ -297,6 +308,7 @@ class MainScreen(Screen):
 
         finally:
             cursor.close()
+            connection.close()
 
 
 # Uygulama Yapısı
